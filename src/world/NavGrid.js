@@ -34,6 +34,10 @@ export class NavGrid {
     this.dist = new Uint16Array(this.cols * this.rows);
     this.flowX = new Int8Array(this.cols * this.rows);
     this.flowZ = new Int8Array(this.cols * this.rows);
+    // previous field, kept so recomputes do not flip a cell's direction and
+    // send an actor walking back the way it came
+    this.prevFlowX = new Int8Array(this.cols * this.rows);
+    this.prevFlowZ = new Int8Array(this.cols * this.rows);
     this.target = { x: 0, z: 0 };
     this.valid = false;
   }
@@ -81,6 +85,8 @@ export class NavGrid {
     this.target.x = x;
     this.target.z = z;
     dist.fill(0xffff);
+    this.prevFlowX.set(flowX);
+    this.prevFlowZ.set(flowZ);
     flowX.fill(0);
     flowZ.fill(0);
 
@@ -182,6 +188,28 @@ export class NavGrid {
             bz = sz;
           }
         }
+        // Hysteresis: if the way we were already heading is no worse than the
+        // freshly computed best, keep heading that way. Without this a jittery
+        // goal makes neighbouring cells point at each other and actors dither.
+        const px = Math.sign(this.prevFlowX[i]);
+        const pz = Math.sign(this.prevFlowZ[i]);
+        if (px || pz) {
+          const hx = ix2 + px;
+          const hz = iz2 + pz;
+          if (this.walkable(hx, hz)) {
+            const hd = dist[this.index(hx, hz)];
+            const diagonal = px !== 0 && pz !== 0;
+            const cornerOk =
+              !diagonal || this.walkable(ix2 + px, iz2) || this.walkable(ix2, iz2 + pz);
+            // Must still be a true minimiser (strictly downhill), otherwise
+            // hysteresis could preserve a two-cell loop.
+            if (cornerOk && hd <= best) {
+              bx = px;
+              bz = pz;
+              best = hd;
+            }
+          }
+        }
         if (bx || bz) {
           const len = Math.hypot(bx, bz) || 1;
           flowX[i] = Math.round((bx / len) * 100);
@@ -243,6 +271,61 @@ export class NavGrid {
     out.x = fx / len;
     out.z = fz / len;
     return out;
+  }
+
+  /**
+   * World position of the next grid cell on the route — following cell centres
+   * is far more reliable than chasing a direction vector, because the straight
+   * line between two walkable cell centres is (almost always) walkable too.
+   */
+  waypoint(x, z, out = { x: 0, z: 0 }, isFree = null) {
+    if (!this.valid) return null;
+    const { ix, iz, cell, originX, originZ, cols, rows } = this;
+    const idx = this.cellOf(x, z);
+    if (!this.inBounds(idx.ix, idx.iz)) return null;
+    const i = this.index(idx.ix, idx.iz);
+    let cx = idx.ix;
+    let cz = idx.iz;
+    // Candidate cells, cheapest first. The caller can veto cells whose centre
+    // it cannot physically walk to, which keeps the grid (coarse) and the
+    // physics (exact) from disagreeing about gaps and corners.
+    const candidates = [];
+    if (this.blocked[i] || this.dist[i] === 0xffff) {
+      for (let n = 0; n < 8; n++) {
+        const nx = idx.ix + NEIGHBOURS[n][0];
+        const nz = idx.iz + NEIGHBOURS[n][1];
+        if (!this.walkable(nx, nz)) continue;
+        candidates.push({ nx, nz, d: this.dist[this.index(nx, nz)] });
+      }
+    } else if (this.dist[i] === 0) {
+      return { x, z }; // already at the goal
+    } else {
+      const fx = Math.sign(this.flowX[i]);
+      const fz = Math.sign(this.flowZ[i]);
+      if (!fx && !fz) return null;
+      candidates.push({ nx: idx.ix + fx, nz: idx.iz + fz, d: -1 });
+      // Fallbacks in case the direct step is not actually walkable.
+      for (let n = 0; n < 8; n++) {
+        const nx = idx.ix + NEIGHBOURS[n][0];
+        const nz = idx.iz + NEIGHBOURS[n][1];
+        if (nx === idx.ix + fx && nz === idx.iz + fz) continue;
+        if (!this.walkable(nx, nz)) continue;
+        candidates.push({ nx, nz, d: this.dist[this.index(nx, nz)] });
+      }
+    }
+    candidates.sort((a, b) => a.d - b.d);
+    for (const cand of candidates) {
+      if (!this.walkable(cand.nx, cand.nz)) continue;
+      const wx = originX + (cand.nx + 0.5) * cell;
+      const wz = originZ + (cand.nz + 0.5) * cell;
+      if (isFree && !isFree(wx - x, wz - z, wx, wz)) continue;
+      out.x = wx;
+      out.z = wz;
+      void cols;
+      void rows;
+      return out;
+    }
+    return null;
   }
 
   /** Remaining grid distance to the goal in metres (Infinity when unreachable). */

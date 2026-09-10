@@ -341,6 +341,8 @@ export class Enemy {
     this.strafeDir = chance(0.5) ? 1 : -1;
     this.strafeTimer = rand(0.8, 2.2);
     this.stuckTime = 0;
+    this.stallTime = 0;
+    this.progressBest = undefined;
     this._navOut = { x: 0, z: 0 };
     this._wallSide = 0; // -1/1 while sliding along an obstacle, 0 when the way is clear
     this._wallTime = 0;
@@ -518,6 +520,7 @@ export class Enemy {
     this.state = s;
     this.stateTime = 0;
     this._wallSide = 0;
+    this._wallCommit = 0;
     if (s === 'engage') this.reactionTimer = rand(this.type.reaction[0], this.type.reaction[1]);
   }
 
@@ -562,27 +565,38 @@ export class Enemy {
    */
   _updateSteer(dt, dirX, dirZ) {
     const want = Math.atan2(dirX, dirZ);
-    const free = (a, r) => !this._probeBlocked(a, r);
+    // Two-point probe: the long look-ahead alone can tunnel straight through a
+    // thin wall (compound walls are only ~0.4 m thick), so always check close in.
+    const free = (a, r) => !this._probeBlocked(a, 0.45) && !this._probeBlocked(a, Math.min(r, 1.0));
     this._wallTime += dt;
+    if (this._wallCommit > 0) this._wallCommit -= dt;
 
-    if (this._wallSide === 0) {
-      if (free(want, 1.35) && this.stuckTime < 0.45) return want;
+    if (this._wallSide !== 0) {
+      if (this._wallCommit <= 0 && free(want, 1.35) && this.stuckTime < 0.4) {
+        // opening found: go back to the direct bearing
+        this._wallSide = 0;
+        this._wallTime = 0;
+        return want;
+      }
+    } else if (!(free(want, 1.35) && this.stuckTime < 0.45)) {
+      // blocked: pick a side once and commit to it for a moment. Sticking to
+      // one side is what stops the actor dithering against a wall.
       this._wallSide = free(want + 1.2 * this.strafeDir, 1.15) ? this.strafeDir : -this.strafeDir;
       this._wallTime = 0;
-    } else if (free(want, 1.35) && this.stuckTime < 0.4) {
-      // opening found: go back to the direct bearing
-      this._wallSide = 0;
-      this._wallTime = 0;
+      this._wallCommit = 1.2;
+    } else {
       return want;
     }
 
+    // Slide: hug the obstacle, taking the sharpest angle we can still walk.
     for (const off of [0.9, 1.2, 1.5, 1.85, 2.3]) {
       const a = want + this._wallSide * off;
       if (free(a, 1.15)) return a;
     }
-    if (this._wallTime > 1.2) {
+    if (this._wallTime > 1.6) {
       this._wallSide *= -1;
       this._wallTime = 0;
+      this._wallCommit = 1.2;
       return want + this._wallSide * 2.3;
     }
     return this._findFreeDir(dirX, dirZ);
@@ -635,8 +649,25 @@ export class Enemy {
     // Shared flow field gives the global bearing; local steering handles the
     // last few metres around cover.
     const nav = this.ctx.nav;
-    const navDir = chasing && nav ? nav.sample(this.root.position.x, this.root.position.z, this._navOut) : null;
-    const ang = this._updateSteer(dt, navDir ? navDir.x : dx, navDir ? navDir.z : dz);
+    const navWp =
+      chasing && nav
+        ? nav.waypoint(
+            this.root.position.x,
+            this.root.position.z,
+            this._navOut,
+            (ox, oz) =>
+              !this.ctx.collision.overlaps(
+                this.root.position.x + ox,
+                this.root.position.z + oz,
+                0.36,
+                this.root.position.y + 0.3,
+                this.root.position.y + 1.6
+              )
+          )
+        : null;
+    const wantX = navWp ? navWp.x - this.root.position.x : dx;
+    const wantZ = navWp ? navWp.z - this.root.position.z : dz;
+    const ang = this._updateSteer(dt, wantX, wantZ);
     const ax = Math.sin(ang);
     const az = Math.cos(ang);
 
@@ -644,15 +675,25 @@ export class Enemy {
     // waypoints must be reached, not orbited.
     // Only settle at fighting range when the target is actually in view;
     // otherwise keep pushing until line of sight opens up.
-    const stopDist = chasing && canSee ? this.type.preferredRange : 1.5;
+    // Only settle at fighting range when the target is in view; with no line of
+    // sight keep closing (the wall-follow steering walks us around cover)
+    // until we are close enough to be practically on top of them.
+    // In view: settle at fighting range. Blind: keep pushing (the wall-follow
+    // steering walks us around whatever is in the way) until we are on top of
+    // the target — a soldier must never idle behind a wall it cannot see past.
+    const stopDist = this.type.preferredRange;
     const move = this.stationary
       ? 0
       : this._wallSide !== 0
         ? 1
-        : d > stopDist + 1.5
-          ? 1
-          : d < stopDist - 6
-            ? -0.5
+        : chasing && canSee
+          ? d > stopDist + 1.5
+            ? 1
+            : d < stopDist - 6
+              ? -0.5
+              : 0
+          : d > 0.9
+            ? 1
             : 0;
     this.vel.x = damp(this.vel.x, ax * speed * move, 5, dt);
     this.vel.z = damp(this.vel.z, az * speed * move, 5, dt);

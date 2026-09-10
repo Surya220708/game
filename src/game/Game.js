@@ -21,6 +21,7 @@ export class Game {
     this.grenade = null;
     this.targets = [];
     this.wave = 0;
+    this.reinforcements = 0;
     this.waveState = 'idle'; // idle | active | intermission
     this.waveTimer = 0;
     this.spawnQueue = [];
@@ -45,6 +46,7 @@ export class Game {
     // Shared context handed to entity instances (enemies, grenades, pickups).
     const game = this;
     this.hooks = this.hooks || {};
+    this.reinforcements = 0;
     this.entityHooks = {
       onEnemyKilled: (enemy, headshot, dir) => game.onEnemyKilled(enemy, headshot, dir),
       onEnemyDamaged: (enemy, dmg, part, source) => {
@@ -69,7 +71,7 @@ export class Game {
       onExplosion: () => {},
     };
     // shared flow-field navigation (one field, every attacker reads it)
-    this.nav = new NavGrid(this.collision, { cell: 1.5, half: 78, agentRadius: 0.46 });
+    this.nav = new NavGrid(this.collision, { cell: 1.2, half: 78, agentRadius: 0.34 });
     this.nav.bake();
     this._navTimer = 0;
 
@@ -167,6 +169,7 @@ export class Game {
       b.pendingExplode = undefined;
     }
     this.wave = 0;
+    this.reinforcements = 0;
     this.waveState = 'idle';
     this.spawnQueue.length = 0;
     this.score = 0;
@@ -313,6 +316,39 @@ export class Game {
     return e;
   }
 
+  /**
+   * Re-route a stuck attacker to a fresh approach. Used sparingly (only for
+   * soldiers that have made no progress for 22 s and are out of the player's
+   * line of sight) so a wave can never stall just out of view.
+   */
+  reinforce(enemy) {
+    const ground = this.map.spawnPoints.filter((sp) => !sp.tower && sp.path && sp.path.length);
+    if (!ground.length) return false;
+    let best = null;
+    let bestScore = -Infinity;
+    for (const sp of ground) {
+      const d = Math.hypot(sp.x - this.player.position.x, sp.z - this.player.position.z);
+      const score = d + Math.random() * 12;
+      if (score > bestScore) {
+        bestScore = score;
+        best = sp;
+      }
+    }
+    if (!best) return false;
+    const target = best.path[0];
+    enemy.spawn(enemy.type.id, { x: best.x, y: best.y ?? 0.05, z: best.z }, {
+      yaw: Math.atan2(target.x - best.x, target.z - best.z),
+      waypoint: best.waypoint,
+      path: best.path,
+      tower: false,
+      stationary: false,
+      awareness: 0.8,
+    });
+    enemy.stallTime = 0;
+    this.reinforcements++;
+    return true;
+  }
+
   spawnPickup(kind, pos) {
     const free = this.pickups.find((p) => !p.active);
     if (!free) return;
@@ -407,11 +443,14 @@ export class Game {
     const p = this.player;
 
     // ---- navigation field (shared by every attacker) ----------------------
+    // Re-flood only when the goal really moved: re-running it on every jitter
+    // makes the gradient flip direction under the AI's feet, which reads as
+    // soldiers dithering in a doorway.
     this._navTimer -= dt;
     const navMoved = Math.hypot(p.position.x - this.nav.target.x, p.position.z - this.nav.target.z);
-    if (this._navTimer <= 0 || navMoved > 3) {
+    if (this._navTimer <= 0 && navMoved > 2.5) {
       this.nav.computeField(p.position.x, p.position.z);
-      this._navTimer = 0.5;
+      this._navTimer = 2.0;
     }
 
     // ---- wave scheduling --------------------------------------------------
@@ -421,6 +460,23 @@ export class Game {
       if (this.spawnTimer > 45) {
         for (const e of this.enemies) {
           if (e.alive && e.awareness < 0.85) e.awareness = 0.85;
+        }
+      }
+      // A soldier that cannot find a way in for a long time is quietly moved
+      // to a fresh approach: waves must never deadlock on one straggler.
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.root.position.x - p.position.x, e.root.position.z - p.position.z);
+        // "Progress" = closing distance. Anything that stops closing for 22 s
+        // (outside the player's view) gets re-routed to a different approach.
+        if (e.progressBest === undefined || d < e.progressBest - 3) {
+          e.progressBest = d;
+          e.stallTime = 0;
+        } else {
+          e.stallTime = (e.stallTime || 0) + dt;
+        }
+        if (e.stallTime > 18 && !this.collision.lineOfSight(p.eyePosition, e.aimPoint, 90)) {
+          this.reinforce(e);
         }
       }
       while (this.spawnQueue.length && this.spawnQueue[0].at <= this.spawnTimer) {

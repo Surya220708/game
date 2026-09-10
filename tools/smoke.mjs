@@ -137,6 +137,11 @@ const fakeInput = {
 };
 
 let enemyShots = 0;
+let noTargetFor = 0;
+let botBest = Infinity;
+let botStuck = 0;
+let botSide = 1;
+let botSideFor = 0;
 const seenStates = new Set();
 const origFlash = effects.spawnMuzzleFlash.bind(effects);
 effects.spawnMuzzleFlash = (pos, dir, scale, fromPlayer) => {
@@ -171,6 +176,47 @@ for (let f = 0; f < simSeconds * 60; f++) {
       best = e;
     }
   }
+  // No target in sight for a while? Move to contact like a real player would,
+  // which also mines the level for navigation regressions.
+  noTargetFor = best ? 0 : noTargetFor + dt;
+  const hunt = !best && noTargetFor > 6 && game.enemies.some((e) => e.alive);
+  let huntTarget = null;
+  let huntDist = Infinity;
+  if (hunt) {
+    let bd = Infinity;
+    for (const e of game.enemies) {
+      if (!e.alive) continue;
+      const d = e.root.position.distanceTo(player.position);
+      if (d < bd) {
+        bd = d;
+        huntTarget = e;
+      }
+    }
+  }
+  if (huntTarget) {
+    huntDist = huntTarget.root.position.distanceTo(player.position);
+    // crude pathing for the test bot: if it stops closing, sidestep for a bit —
+    // otherwise it grinds into the first wall between it and the straggler.
+    if (huntDist < botBest - 0.5) {
+      botBest = huntDist;
+      botStuck = 0;
+    } else {
+      botStuck += dt;
+    }
+    if (botStuck > 2.2 && botSideFor <= 0) {
+      botSide *= -1;
+      botSideFor = 1.4;
+      botStuck = 0;
+      botBest = Infinity;
+    }
+    const dx = huntTarget.root.position.x - player.position.x;
+    const dz = huntTarget.root.position.z - player.position.z;
+    const wantYaw = Math.atan2(dx, dz) + Math.PI;
+    player.yaw += Math.atan2(Math.sin(wantYaw - player.yaw), Math.cos(wantYaw - player.yaw)) * 0.4;
+    const dy = huntTarget.root.position.y + 1.2 - (player.position.y + player.eyeHeight);
+    player.pitch += (Math.atan2(dy, Math.max(2, huntDist)) - player.pitch) * 0.3;
+  }
+
   if (best) {
     const dx = best.root.position.x - player.position.x;
     const dz = best.root.position.z - player.position.z;
@@ -181,8 +227,14 @@ for (let f = 0; f < simSeconds * 60; f++) {
   }
 
   // scripted behaviour: hold a defensive position, aim down sights, shoot
-  fakeInput.axis.x = best && bestD > 30 ? Math.sin(t * 0.6) : 0;
-  fakeInput.axis.y = best && bestD > 32 ? 1 : 0;
+  if (botSideFor > 0) botSideFor -= dt;
+  if (huntTarget) {
+    fakeInput.axis.x = botSideFor > 0 ? botSide : 0;
+    fakeInput.axis.y = 1;
+  } else {
+    fakeInput.axis.x = best && bestD > 30 ? Math.sin(t * 0.6) : 0;
+    fakeInput.axis.y = best && bestD > 32 ? 1 : 0;
+  }
   fakeInput.crouching = false;
   fakeInput.down.delete('sprint');
   fakeInput.down.add('ads');
@@ -257,7 +309,8 @@ for (let f = 0; f < simSeconds * 60; f++) {
         `      [nav] ${e.state} pos=(${e.root.position.x.toFixed(1)},${e.root.position.z.toFixed(1)}) ` +
           `field=${nav ? nav.distanceTo(e.root.position.x, e.root.position.z).toFixed(1) : '-'} ` +
           `true=${Math.hypot(e.root.position.x - player.position.x, e.root.position.z - player.position.z).toFixed(1)} ` +
-          `vel=${e.walkSpeed.toFixed(2)} wall=${e._wallSide} pathIdx=${e.pathIndex} aware=${e.awareness.toFixed(2)}`
+          `vel=${e.walkSpeed.toFixed(2)} wall=${e._wallSide} pathIdx=${e.pathIndex} aware=${e.awareness.toFixed(2)}` +
+          (nav ? ` cell=${(() => { const c = nav.cellOf(e.root.position.x, e.root.position.z); return nav.blocked[nav.index(c.ix, c.iz)] ? 'BLOCKED' : 'open'; })()} flow=${(() => { const d = nav.sample(e.root.position.x, e.root.position.z, { x: 0, z: 0 }); return d ? `${d.x.toFixed(2)},${d.z.toFixed(2)}` : 'none'; })()}` : '')
       );
     }
   }
@@ -377,6 +430,10 @@ for (const e of game.enemies) {
       `dist=${d.toFixed(1)} stuck=${e.stuckTime.toFixed(1)} pathIdx=${e.pathIndex}/${e.path ? e.path.length : '-'} aware=${e.awareness.toFixed(2)} hp=${e.health.toFixed(0)}`
   );
 }
+console.log(
+  `   waveState=${game.waveState} wave=${game.wave} remaining=${game.remaining} queue=${game.spawnQueue.length} ` +
+    `spawnTimer=${game.spawnTimer.toFixed(1)} reinforced=${game.reinforcements} active=${game.enemies.filter((e) => e.active).length}`
+);
 console.log('  enemy state histogram:', JSON.stringify(states));
 
 // ---------------------------------------------------------------------------
