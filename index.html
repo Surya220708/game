@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0c0a" />
+<meta name="description" content="OPERATION BLACKOUT — a tactical first-person shooter for the browser. Keyboard + mouse or full touch controls." />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>OPERATION BLACKOUT</title>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- ============================ HUD ============================ -->
+<div id="hud" class="hidden" aria-hidden="true">
+
+  <!-- directional damage indicators -->
+  <div id="dmgdir"></div>
+
+  <!-- crosshair -->
+  <div id="crosshair">
+    <div class="ch-line ch-t"></div>
+    <div class="ch-line ch-b"></div>
+    <div class="ch-line ch-l"></div>
+    <div class="ch-line ch-r"></div>
+    <div class="ch-dot"></div>
+    <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  </div>
+
+  <!-- top row -->
+  <div class="hud-top">
+    <div id="objective" class="panel">
+      <div class="obj-head"><span class="dot"></span> HOSTILE CONTACT</div>
+      <div class="obj-row"><span class="obj-wave">WAVE <b id="wave-num">1</b></span><span id="wave-status">12 REMAINING</span></div>
+      <div class="obj-bar"><i id="wave-bar"></i></div>
+      <div class="obj-foot" id="wave-threat">THREAT LEVEL: LOW</div>
+    </div>
+
+    <div id="killfeed"></div>
+
+    <div class="hud-right">
+      <div id="scorebox" class="panel">
+        <div class="sb-score" id="score">0</div>
+        <div class="sb-label">SCORE</div>
+        <div class="sb-row"><span>STREAK</span><b id="streak">0</b></div>
+      </div>
+      <canvas id="radar" width="360" height="360"></canvas>
+      <div class="radar-label">SECTOR SCAN</div>
+    </div>
+  </div>
+
+  <!-- compass -->
+  <div id="compass-wrap"><canvas id="compass" width="1024" height="48"></canvas><i class="compass-mark"></i></div>
+
+  <!-- bottom row -->
+  <div class="hud-bottom">
+    <div id="vitals" class="panel">
+      <div class="vital-row">
+        <span class="vital-key">HP</span>
+        <div class="bar"><i id="health-fill"></i></div>
+        <span class="vital-num" id="health-num">100</span>
+      </div>
+      <div class="vital-row small">
+        <span class="vital-key">STM</span>
+        <div class="bar thin"><i id="stamina-fill"></i></div>
+        <span class="vital-num" id="stamina-num">100</span>
+      </div>
+      <div class="vital-row small">
+        <span class="vital-key">ARM</span>
+        <div class="bar thin armor"><i id="armor-fill"></i></div>
+        <span class="vital-num" id="armor-num">0</span>
+      </div>
+    </div>
+
+    <div id="weaponinfo" class="panel">
+      <div class="wpn-top">
+        <span id="weapon-name">M4A1 CARBINE</span>
+        <span id="firemode" class="tag">AUTO</span>
+      </div>
+      <div class="wpn-ammo">
+        <span id="ammo-mag">30</span><span class="slash">/</span><span id="ammo-res">240</span>
+      </div>
+      <div class="wpn-bottom">
+        <span id="grenade-count">◆ ◆</span>
+        <span id="reload-hint" class="hidden">RELOAD <b>R</b></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- floating banners / prompts -->
+  <div id="banners"></div>
+  <div id="prompt" class="hidden"></div>
+  <div id="damage-flash"></div>
+  <div id="suppression"></div>
+
+  <!-- scoped overlay (marksman rifle) -->
+  <div id="scope" class="hidden">
+    <div class="scope-ring"></div>
+    <div class="scope-cross-h"></div>
+    <div class="scope-cross-v"></div>
+    <div class="scope-ticks"></div>
+    <div class="scope-blackframe"></div>
+  </div>
+
+  <!-- hit direction arc marker -->
+  <div id="killflash"></div>
+</div>
+
+<!-- ======================= TOUCH CONTROLS ======================= -->
+<div id="touch" class="hidden">
+  <div id="stick-zone">
+    <div id="stick-base"><div id="stick-knob"></div></div>
+  </div>
+  <div id="look-zone"></div>
+  <div id="touch-buttons">
+    <button class="tb tb-grenade" data-act="grenade" aria-label="Grenade"><span>◆</span></button>
+    <button class="tb tb-reload" data-act="reload" aria-label="Reload"><span>⟳</span></button>
+    <button class="tb tb-crouch" data-act="crouch" aria-label="Crouch"><span>▼</span></button>
+    <button class="tb tb-jump" data-act="jump" aria-label="Jump"><span>⤒</span></button>
+    <button class="tb tb-ads" data-act="ads" aria-label="Aim"><span>⊕</span></button>
+    <button class="tb tb-fire" data-act="fire" aria-label="Fire"><span>◉</span></button>
+    <button class="tb tb-swap" data-act="swap" aria-label="Swap weapon"><span>⇄</span></button>
+  </div>
+  <div id="touch-hint">DRAG RIGHT SIDE TO AIM · PUSH STICK FULLY TO SPRINT</div>
+</div>
+
+<!-- ========================== SCREENS ========================== -->
+<div id="screen-loading" class="screen">
+  <div class="load-wrap">
+    <div class="logo-small">OPERATION <b>BLACKOUT</b></div>
+    <div class="loadbar"><i id="load-fill"></i></div>
+    <div class="load-log" id="load-log">BOOTING TACTICAL SUITE…</div>
+    <div class="tip" id="load-tip"></div>
+  </div>
+</div>
+
+<div id="screen-menu" class="screen hidden">
+  <div class="menu-bg"></div>
+  <div class="menu-inner">
+    <div class="title-block">
+      <div class="tagline">CLASSIFIED // TIER 1 SIMULATION</div>
+      <h1>OPERATION<br /><b>BLACKOUT</b></h1>
+      <div class="subtitle">SURVIVE THE ASSAULT ON FORWARD OUTPOST <b>EAGLE-7</b></div>
+    </div>
+    <div class="menu-buttons">
+      <button class="btn primary" id="btn-deploy">DEPLOY<span>Enter hostile airspace</span></button>
+      <button class="btn" id="btn-briefing">BRIEFING<span>Controls &amp; objectives</span></button>
+      <button class="btn" id="btn-settings-menu">SETTINGS<span>Graphics, audio, input</span></button>
+      <button class="btn ghost" id="btn-touch-toggle">TOUCH CONTROLS: AUTO</button>
+    </div>
+    <div class="menu-foot">
+      <span id="menu-device">DEVICE: DESKTOP</span>
+      <span>v1.0 · PROCEDURAL ENGINE</span>
+    </div>
+  </div>
+</div>
+
+<div id="screen-briefing" class="screen hidden">
+  <div class="modal">
+    <h2>MISSION BRIEFING</h2>
+    <p class="brief-lead">
+      Outpost <b>EAGLE-7</b> is under sustained assault. Hold the compound, eliminate all
+      hostile waves, and stay alive as long as you can. Reinforcements drop every
+      <b>15 seconds</b> between waves — resupply during the lull.
+    </p>
+    <div class="brief-grid">
+      <div>
+        <h3>KEYBOARD &amp; MOUSE</h3>
+        <ul class="keys">
+          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></li>
+          <li><kbd>MOUSE</kbd><span>Look / Aim</span></li>
+          <li><kbd>LMB</kbd><span>Fire</span></li>
+          <li><kbd>RMB</kbd><span>Aim down sights (ADS)</span></li>
+          <li><kbd>SHIFT</kbd><span>Sprint</span></li>
+          <li><kbd>CTRL</kbd> / <kbd>C</kbd><span>Crouch</span></li>
+          <li><kbd>SPACE</kbd><span>Jump</span></li>
+          <li><kbd>R</kbd><span>Reload</span></li>
+          <li><kbd>G</kbd><span>Frag grenade</span></li>
+          <li><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><span>Swap weapon</span></li>
+          <li><kbd>ESC</kbd><span>Pause</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>TOUCH</h3>
+        <ul class="keys">
+          <li><span class="pad">LEFT STICK</span><span>Move · push fully to sprint</span></li>
+          <li><span class="pad">DRAG RIGHT</span><span>Aim / turn</span></li>
+          <li><span class="pad">◉</span><span>Fire (hold for auto)</span></li>
+          <li><span class="pad">⊕</span><span>Aim down sights</span></li>
+          <li><span class="pad">▼</span><span>Crouch</span></li>
+          <li><span class="pad">⤒</span><span>Jump</span></li>
+          <li><span class="pad">⟳</span><span>Reload</span></li>
+          <li><span class="pad">◆</span><span>Frag grenade</span></li>
+        </ul>
+      </div>
+    </div>
+    <h3>FIELD NOTES</h3>
+    <ul class="tips">
+      <li><b>Headshots</b> deal double damage. Aim high.</li>
+      <li><b>Crouching</b> tightens your spread and steadies recoil.</li>
+      <li>Enemies flank. Watch the <b>sector radar</b> in the top-right.</li>
+      <li>Health regenerates after a few seconds out of contact — <b>armour does not</b>.</li>
+      <li>Enemy muzzle flashes give away their position. Fire in short bursts.</li>
+    </ul>
+    <button class="btn primary" id="btn-briefing-close">UNDERSTOOD</button>
+  </div>
+</div>
+
+<div id="screen-settings" class="screen hidden">
+  <div class="modal">
+    <h2>SETTINGS</h2>
+    <div class="settings-grid">
+      <label class="set-row"><span>Mouse / Touch sensitivity</span>
+        <input type="range" id="set-sens" min="0.1" max="3" step="0.05" /><b id="val-sens"></b></label>
+      <label class="set-row"><span>Aim sensitivity while ADS</span>
+        <input type="range" id="set-adsens" min="0.2" max="1.5" step="0.05" /><b id="val-adsens"></b></label>
+      <label class="set-row"><span>Field of view</span>
+        <input type="range" id="set-fov" min="65" max="110" step="1" /><b id="val-fov"></b></label>
+      <label class="set-row"><span>Master volume</span>
+        <input type="range" id="set-vol" min="0" max="1" step="0.05" /><b id="val-vol"></b></label>
+      <label class="set-row"><span>Graphics quality</span>
+        <select id="set-quality">
+          <option value="low">LOW — best performance</option>
+          <option value="medium">MEDIUM — balanced</option>
+          <option value="high">HIGH — best visuals</option>
+          <option value="ultra">ULTRA — desktop only</option>
+        </select></label>
+      <label class="set-row"><span>Render scale</span>
+        <input type="range" id="set-scale" min="0.5" max="1.5" step="0.05" /><b id="val-scale"></b></label>
+      <label class="set-row"><span>Invert vertical look</span>
+        <input type="checkbox" id="set-invert" class="toggle" /></label>
+      <label class="set-row"><span>Aim assist (touch)</span>
+        <input type="checkbox" id="set-assist" class="toggle" /></label>
+      <label class="set-row"><span>Force touch controls</span>
+        <input type="checkbox" id="set-touch" class="toggle" /></label>
+      <label class="set-row"><span>Bullet tracers &amp; particles</span>
+        <input type="checkbox" id="set-fx" class="toggle" /></label>
+      <label class="set-row"><span>Show FPS counter</span>
+        <input type="checkbox" id="set-fps" class="toggle" /></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="btn-reset-settings">RESET DEFAULTS</button>
+      <button class="btn primary" id="btn-settings-close">APPLY &amp; CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<div id="screen-pause" class="screen hidden">
+  <div class="modal narrow">
+    <h2>TACTICAL PAUSE</h2>
+    <div class="pause-stats" id="pause-stats"></div>
+    <div class="modal-actions column">
+      <button class="btn primary" id="btn-resume">RESUME OPERATION</button>
+      <button class="btn" id="btn-settings-pause">SETTINGS</button>
+      <button class="btn" id="btn-restart">RESTART MISSION</button>
+      <button class="btn ghost" id="btn-quit">ABANDON &amp; RETURN TO MENU</button>
+    </div>
+  </div>
+</div>
+
+<div id="screen-gameover" class="screen hidden">
+  <div class="modal">
+    <h2 class="kia">KILLED IN ACTION</h2>
+    <div class="kia-sub" id="kia-sub">OUTPOST EAGLE-7 HAS FALLEN</div>
+    <div class="stats-grid">
+      <div><b id="st-waves">0</b><span>WAVES SURVIVED</span></div>
+      <div><b id="st-kills">0</b><span>CONFIRMED KILLS</span></div>
+      <div><b id="st-heads">0</b><span>HEADSHOTS</span></div>
+      <div><b id="st-acc">0%</b><span>ACCURACY</span></div>
+      <div><b id="st-time">0:00</b><span>TIME ALIVE</span></div>
+      <div><b id="st-score">0</b><span>FINAL SCORE</span></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" id="btn-retry">REDEPLOY</button>
+      <button class="btn ghost" id="btn-gameover-menu">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<div id="screen-error" class="screen hidden">
+  <div class="modal narrow">
+    <h2>UNABLE TO DEPLOY</h2>
+    <p id="error-msg" class="brief-lead"></p>
+    <p class="brief-lead small">This build needs WebGL2. Try a desktop browser, or enable hardware acceleration.</p>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

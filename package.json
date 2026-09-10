@@ -1,0 +1,20 @@
+{
+  "name": "operation-blackout",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A polished browser-based tactical FPS built from scratch with Three.js. Keyboard + mouse and full touch controls.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "smoke": "node tools/smoke.mjs",
+    "check": "node tools/smoke.mjs && vite build"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}
