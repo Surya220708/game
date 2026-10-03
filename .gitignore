@@ -1,0 +1,9 @@
+# generated asset output (re-create with: python -m weapon_assets all --out dist)
+dist/
+out/
+*.pyc
+__pycache__/
+.venv/
+venv/
+.pytest_cache/
+.DS_Store

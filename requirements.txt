@@ -1,0 +1,2 @@
+# Runtime dependency: image rasterisation, compositing and LANCZOS resampling.
+Pillow>=10.0

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weapon-assets"
+version = "1.0.0"
+description = "Procedural weapon sprites, effects and rolled stats, generated from pure Python + Pillow"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["Pillow>=10.0"]
+
+[project.scripts]
+weapon-assets = "weapon_assets.cli:main"
+
+[tool.setuptools]
+packages = ["weapon_assets"]
+
+[tool.setuptools.package-data]
+weapon_assets = ["py.typed"]
